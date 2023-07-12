@@ -1,13 +1,21 @@
+// ignore_for_file: unused_field
+
+import 'dart:collection';
+import 'dart:convert';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import "package:url_launcher/url_launcher.dart";
 import 'package:get/get.dart';
 import 'package:tesla_animated_app/common/utils/tesla.dart';
 import 'package:tesla_animated_app/common/values/values.dart';
 import 'package:tesla_animated_app/common/widgets/widgets.dart';
 import 'package:tesla_animated_app/common/utils/utils.dart';
 import 'package:tesla_animated_app/screens/global.dart';
+import "package:http/http.dart" as http;
 
 class IndexPage extends StatefulWidget {
   IndexPage({Key? key}) : super(key: key);
@@ -19,8 +27,10 @@ class IndexPage extends StatefulWidget {
 class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
   // 当前 tab 页码
   int _page = 0;
-
-//几个动画初始值
+  //是否去webview登录
+  bool isShowWeb = false;
+  String _url = '';
+  //几个动画初始值
 
   late AnimationController _tempAnimationController; //温度专用
   late Animation<double> _animationCarMove; //车往右边移动
@@ -35,6 +45,22 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
 
   late List<Animation<double>> _tyreAnimations;
   TeslaService _teslaService = new TeslaService();
+
+  final GlobalKey _webViewKey = GlobalKey();
+  late InAppWebViewController _iosWebViewController;
+  InAppWebViewGroupOptions _iosWebViewOptions = InAppWebViewGroupOptions(
+    crossPlatform: InAppWebViewOptions(
+      useShouldOverrideUrlLoading: true,
+      mediaPlaybackRequiresUserGesture: false,
+    ),
+    android: AndroidInAppWebViewOptions(
+      useHybridComposition: true,
+    ),
+    ios: IOSInAppWebViewOptions(
+      allowsInlineMediaPlayback: true,
+    ),
+  );
+
   void setuptempAnimation() {
     _tempAnimationController = AnimationController(
       vsync: this,
@@ -70,6 +96,27 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
         parent: _tyreAnimationController, curve: Interval(0.7, 0.9));
     _animationtyre4 = CurvedAnimation(
         parent: _tyreAnimationController, curve: Interval(0.8, 1.0));
+  }
+
+  Future<void> _exchangeAuthCode(String authCode) async {
+    // 通过授权码获取token =>web
+    try {
+      Map tokenData = await _teslaService.getOauth2Token(authCode);
+      setToken(tokenData);
+      setState(() {
+        isShowWeb = !isShowWeb;
+      });
+      await Future.delayed(Duration(milliseconds: 120));
+      String token = Global.getstr('token') ?? '';
+      var res = await _teslaService.getVehicles(token);
+      String id = res['response'][0]['id'].toString();
+      String vid = res['response'][0]['vehicle_id'].toString();
+      Global.setstr('id', id);
+      Global.setstr('vid', vid);
+      wakeAndGetCarInfo();
+    } catch (err) {
+      print(err);
+    }
   }
 
   @override
@@ -120,7 +167,8 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
       });
     }
 
-    getpage(1);
+    //这里判断一下是否有token
+    init();
     super.initState();
   }
 
@@ -243,11 +291,9 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
     setState(() {
       _loadingtext = '加载中';
     });
-    // if (1 == 1) return;
-    final wake = await postbyapi(url.carhandle(id, 'wake_up'));
-    print(wake);
-    await Future.delayed(Duration(milliseconds: 120));
     final res = await getbyapi(url.carhandle(id, 'vehicle_data'));
+    print('carinfo');
+    print(res);
     Map carinfo = res["response"];
     String carname = '大土豆';
     // String carname = carinfo["display_name"];
@@ -255,14 +301,29 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
     Map climate_state = carinfo["climate_state"];
     Map vehicle_state = carinfo["vehicle_state"];
     Map charge_state = carinfo["charge_state"];
+    Map drive_state = carinfo["drive_state"];
     // print(climate_state);
     // print(vehicle_state);
-    // print(charge_state);
+    print(charge_state);
+    // print(drive_state);
+    String gpx = drive_state["corrected_longitude"].toString() +
+        "," +
+        drive_state["corrected_latitude"].toString();
+    print('检查gpx');
+    print(gpx);
+    var loca = await http.get(Uri.parse(
+        'https://restapi.amap.com/v3/geocode/regeo?output=json&location=' +
+            gpx +
+            '&key=49521b5942bff4d41e5495698ab5bcb6'));
+    Map resloca = jsonDecode(loca.body);
+    String locationtext = resloca["regeocode"]["formatted_address"] ?? '未知地点';
+    print(locationtext);
     print('检查哨兵');
     print(vehicle_state["sentry_mode"]);
     setState(() {
       _loadingtext = '已驻车';
       _carkm = (charge_state["ideal_battery_range"] * 1.6093).round();
+      _carlevel = charge_state["battery_level"];
       _isleftlock = vehicle_state["locked"]; //主锁
       _isheadlock = vehicle_state["ft"]; //前备箱锁
       _istrucklock = vehicle_state["rt"]; //后备箱锁
@@ -270,32 +331,31 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
       _isacopen = climate_state["is_auto_conditioning_on"]; //空调
       _tempnum = climate_state["driver_temp_setting"]; //默认设置的温度
       _tempinsidenum = climate_state["inside_temp"]; //默认设置的温度
-      // carinfo = res["data"]["carinfo"];
+      carinfo = carinfo;
     });
     Global.setbool('isacopen', this._isacopen);
     Global.setbool('issbopen', this._issbopen);
     Global.setbool('iscaropen', this._isleftlock);
-    // if (carinfo["locationtext"].length > 15) {
-    //   int i = carinfo["locationtext"].indexOf('省');
-    //   String a = carinfo["locationtext"]
-    //       .substring(i + 1, carinfo["locationtext"].length);
-    //   if (a.indexOf('(') > 5) {
-    //     int newi = a.indexOf('(');
-    //     String b = a.substring(0, newi);
-    //     print(b);
-    //     setState(() {
-    //       _locationtext = b;
-    //     });
-    //   } else {
-    //     setState(() {
-    //       _locationtext = a;
-    //     });
-    //   }
-    // } else {
-    //   setState(() {
-    //     _locationtext = res["data"]["carinfo"]["locationtext"];
-    //   });
-    // }
+    if (locationtext.length > 15) {
+      int i = locationtext.indexOf('省');
+      String a = locationtext.substring(i + 1, locationtext.length);
+      if (a.indexOf('(') > 5) {
+        int newi = a.indexOf('(');
+        String b = a.substring(0, newi);
+        print(b);
+        setState(() {
+          _locationtext = b;
+        });
+      } else {
+        setState(() {
+          _locationtext = a;
+        });
+      }
+    } else {
+      setState(() {
+        _locationtext = locationtext;
+      });
+    }
 
     if (Global.getstr("carname") != carname) {
       Global.setstr("carname", carname);
@@ -307,9 +367,61 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
       print("车名一样、不需要动");
     }
     Global.setstr('carlocation', _locationtext);
-
     Global.setint('getcarinfounix', getunixnow());
     print(Global.getint('getcarinfounix'));
+  }
+
+  // 初始方法
+  void init() {
+    //1、先判断token的有效时间
+    int expunix = Global.getint('unix') ?? 0;
+    if (expunix == 0) {
+      print('需要登录');
+      setState(() {
+        isShowWeb = true;
+      });
+    } else if (getunixnow() > expunix) {
+      print('token过期了');
+      refreshToken();
+    } else {
+      print('token有效');
+      wakeAndGetCarInfo();
+    }
+  }
+
+  //wakeAndGetCarInfo
+  void wakeAndGetCarInfo() async {
+    String id = Global.getstr('id')!;
+    print('ready to wake up');
+    final wake = await postbyapi(url.carhandle(id, 'wake_up'));
+    print('wake up');
+    print(wake);
+    await Future.delayed(Duration(milliseconds: 120));
+    getcarinfo();
+  }
+
+  //刷新token
+  void refreshToken() async {
+    print('add global unix. astoken:');
+    String retoken = Global.getstr('retoken')!;
+    var tokenData = await _teslaService.refreshAccessToken(retoken);
+    setToken(tokenData);
+  }
+
+  //set Token
+  void setToken(Map tokenData) {
+    print('set token and retoken:');
+    String new_token = tokenData['access_token'];
+    String new_retoken = tokenData['refresh_token'];
+    Global.setstr('token', new_token);
+    Global.setstr('retoken', new_retoken);
+    //获取当前时间戳
+    int unix = getunixnow();
+    int expunix = unix + 28800000;
+    Global.setint('unix', expunix);
+    print('unix is : $expunix');
+    print('access_token is : $new_token');
+    print('refresh_token is : $new_retoken');
   }
 
   @override
@@ -357,134 +469,201 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
         },
         selectedTab: this._page,
       ),
-      body: SafeArea(child: LayoutBuilder(builder: (context, constrains) {
-        return Stack(
-          alignment: Alignment.center,
-          children: [
-            Column(
-              children: [
-                ElevatedButton(
-                    onPressed: () async {
-                      String retoken = Global.getstr('retoken') ?? '';
-                      var tokenData =
-                          await _teslaService.refreshAccessToken(retoken);
-                      print('add global unix. astoken:');
-                      String new_retoken = tokenData['refresh_token'];
-                      String new_token = tokenData['access_token'];
-                      print(tokenData);
-                      Global.setstr('token', new_token);
-                      Global.setstr('retoken', new_retoken);
-                    },
-                    child: Text('刷新token')),
-                Spacer(),
-                ElevatedButton(
-                    onPressed: () async {
-                      String token = Global.getstr('token') ?? '';
-                      var res = await _teslaService.getVehicles(token);
-                      print(res);
-                    },
-                    child: Text('获取数据')),
-              ],
-            ),
-            SizedBox(
-              height: constrains.maxHeight,
-              width: constrains.maxWidth,
-            ),
-            if (this._page == 0) ...buildtopinfo(context),
-            Positioned(
-              left: constrains.maxWidth / 2 * _animationCarMove.value,
-              height: constrains.maxHeight,
-              width: constrains.maxWidth,
-              child: Padding(
-                padding:
-                    EdgeInsets.symmetric(vertical: constrains.maxHeight * 0.1),
-                child: SvgPicture.asset(
-                  "assets/icons/Car.svg",
-                  width: double.infinity,
-                ),
+      body: isShowWeb
+          ? InAppWebView(
+              key: _webViewKey,
+              // contextMenu: contextMenu,
+              initialUrlRequest: URLRequest(
+                url: Uri.parse(_teslaService.getTeslaAuthorizeUrl()),
               ),
-            ),
-            ...buildlocksview(context, constrains),
-            if (this._page == 0)
-              Positioned(
-                width: 375.w,
-                bottom: 10.h,
-                child: Text(
-                  _locationtext,
-                  maxLines: 1,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white24,
-                    fontSize: 14.sp,
-                    fontWeight: FontWeight.w400,
+              initialUserScripts: UnmodifiableListView<UserScript>([]),
+              initialOptions: _iosWebViewOptions,
+              onWebViewCreated: (controller) {
+                _iosWebViewController = controller;
+              },
+              onLoadStart: (controller, uri) {
+                setState(() {
+                  _url = uri.toString();
+                });
+              },
+              androidOnPermissionRequest:
+                  (controller, origin, resources) async {
+                return PermissionRequestResponse(
+                  resources: resources,
+                  action: PermissionRequestResponseAction.GRANT,
+                );
+              },
+              shouldOverrideUrlLoading: (controller, navigationAction) async {
+                var uri = navigationAction.request.url;
+
+                if (uri
+                    .toString()
+                    .contains("https://auth.tesla.com/void/callback?code")) {
+                  Map queryParams = Uri.parse(uri.toString()).queryParameters;
+
+                  await _exchangeAuthCode(queryParams['code']);
+
+                  return NavigationActionPolicy.CANCEL;
+                }
+
+                if (![
+                  "http",
+                  "https",
+                  "file",
+                  "chrome",
+                  "data",
+                  "javascript",
+                  "about"
+                ].contains(uri?.scheme)) {
+                  if (await canLaunch(_url)) {
+                    // Launch the App
+                    await launch(
+                      _url,
+                    );
+
+                    // and cancel the request
+                    return NavigationActionPolicy.CANCEL;
+                  }
+                }
+                return NavigationActionPolicy.ALLOW;
+              },
+            )
+          : SafeArea(child: LayoutBuilder(builder: (context, constrains) {
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  Column(
+                    children: [
+                      // ElevatedButton(
+                      //     onPressed: () async {
+                      //       Global.del('token');
+                      //       Global.del('retoken');
+                      //       Global.del('unix');
+                      //       setState(() {
+                      //         isShowWeb = !isShowWeb;
+                      //       });
+                      //     },
+                      //     child: Text('打开webview')),
+                      // ElevatedButton(
+                      //     onPressed: () async {
+                      //       String retoken = Global.getstr('retoken') ?? '';
+                      //       var tokenData =
+                      //           await _teslaService.refreshAccessToken(retoken);
+                      //       print('add global unix. astoken:');
+                      //       String new_retoken = tokenData['refresh_token'];
+                      //       String new_token = tokenData['access_token'];
+                      //       print(tokenData);
+                      //       Global.setstr('token', new_token);
+                      //       Global.setstr('retoken', new_retoken);
+                      //     },
+                      //     child: Text('刷新token')),
+                      Spacer(),
+                      ElevatedButton(
+                          onPressed: wakeAndGetCarInfo, child: Text('获取数据')),
+                    ],
                   ),
-                ),
-              ),
-            AnimatedOpacity(
-              duration: defaultDuration,
-              opacity: this._page == 1 ? 1 : 0,
-              child: SvgPicture.asset(
-                "assets/icons/Battery.svg",
-                width: constrains.maxWidth * 0.45,
-              ),
-            ),
-            AnimatedOpacity(
-              duration: defaultDuration,
-              opacity: this._page == 1 ? 1 : 0,
-              child: AnimatedContainer(
-                duration: defaultDuration,
-                height: this._page == 1
-                    ? constrains.maxHeight
-                    : constrains.maxHeight * 0.9,
-                child: buildbatteryview(context, constrains),
-              ),
-            ),
-            Positioned(
-              height: constrains.maxHeight,
-              width: constrains.maxWidth,
-              top: 60 * (1 - _animationTempShow.value),
-              child: Opacity(
-                opacity: _animationTempShow.value,
-                child: buildtempview(context, constrains),
-              ),
-            ),
-            if (this._page == 2)
-              Positioned(
-                right: -1800 * (1 - _animationTempLight.value),
-                child: AnimatedSwitcher(
-                  duration: defaultDuration,
-                  child: this._iscoolopen
-                      ? Image.asset(
-                          "assets/images/Cool_glow_2.png",
-                          width: 200,
-                          key: UniqueKey(),
-                        )
-                      : Image.asset(
-                          "assets/images/Hot_glow_4.png",
-                          width: 200,
-                          key: UniqueKey(),
+                  SizedBox(
+                    height: constrains.maxHeight,
+                    width: constrains.maxWidth,
+                  ),
+                  if (this._page == 0) ...buildtopinfo(context),
+                  Positioned(
+                    left: constrains.maxWidth / 2 * _animationCarMove.value,
+                    height: constrains.maxHeight,
+                    width: constrains.maxWidth,
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                          vertical: constrains.maxHeight * 0.1),
+                      child: SvgPicture.asset(
+                        "assets/icons/Car.svg",
+                        width: double.infinity,
+                      ),
+                    ),
+                  ),
+                  ...buildlocksview(context, constrains),
+                  if (this._page == 0)
+                    Positioned(
+                      width: 375.w,
+                      bottom: 10.h,
+                      child: Text(
+                        _locationtext,
+                        maxLines: 1,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white24,
+                          fontSize: 14.sp,
+                          fontWeight: FontWeight.w400,
                         ),
-                ),
-              ),
-            if (this._isshowtyre) ...buildtyresview(context, constrains),
-            if (this._isshowtyretemp)
-              GridView.builder(
-                itemCount: 1,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 1,
-                  mainAxisSpacing: defaultPadding,
-                  crossAxisSpacing: defaultPadding,
-                  childAspectRatio: constrains.maxWidth / constrains.maxHeight,
-                ),
-                itemBuilder: (BuildContext context, int index) =>
-                    ScaleTransition(
-                  scale: _tyreAnimations[index],
-                  child: buildtyrecard(carinfo: carinfo),
-                ),
-              ),
-          ],
-        );
-      })),
+                      ),
+                    ),
+                  AnimatedOpacity(
+                    duration: defaultDuration,
+                    opacity: this._page == 1 ? 1 : 0,
+                    child: SvgPicture.asset(
+                      "assets/icons/Battery.svg",
+                      width: constrains.maxWidth * 0.45,
+                    ),
+                  ),
+                  AnimatedOpacity(
+                    duration: defaultDuration,
+                    opacity: this._page == 1 ? 1 : 0,
+                    child: AnimatedContainer(
+                      duration: defaultDuration,
+                      height: this._page == 1
+                          ? constrains.maxHeight
+                          : constrains.maxHeight * 0.9,
+                      child: buildbatteryview(context, constrains),
+                    ),
+                  ),
+                  Positioned(
+                    height: constrains.maxHeight,
+                    width: constrains.maxWidth,
+                    top: 60 * (1 - _animationTempShow.value),
+                    child: Opacity(
+                      opacity: _animationTempShow.value,
+                      child: buildtempview(context, constrains),
+                    ),
+                  ),
+                  if (this._page == 2)
+                    Positioned(
+                      right: -1800 * (1 - _animationTempLight.value),
+                      child: AnimatedSwitcher(
+                        duration: defaultDuration,
+                        child: this._iscoolopen
+                            ? Image.asset(
+                                "assets/images/Cool_glow_2.png",
+                                width: 200,
+                                key: UniqueKey(),
+                              )
+                            : Image.asset(
+                                "assets/images/Hot_glow_4.png",
+                                width: 200,
+                                key: UniqueKey(),
+                              ),
+                      ),
+                    ),
+                  if (this._isshowtyre) ...buildtyresview(context, constrains),
+                  if (this._isshowtyretemp)
+                    GridView.builder(
+                      itemCount: 1,
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 1,
+                        mainAxisSpacing: defaultPadding,
+                        crossAxisSpacing: defaultPadding,
+                        childAspectRatio:
+                            constrains.maxWidth / constrains.maxHeight,
+                      ),
+                      itemBuilder: (BuildContext context, int index) =>
+                          ScaleTransition(
+                        scale: _tyreAnimations[index],
+                        child: buildtyrecard(
+                          carinfo: carinfo,
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            })),
     );
   }
 
@@ -945,21 +1124,14 @@ class buildtyrecard extends StatelessWidget {
             children: [
               Text('车辆Api内容:', style: TextStyle(fontSize: 24.sp)),
               SizedBox(height: 50.h),
-              // Text('状态: ${carinfo["state"].toString()}'),
-              // Text('vin: ${carinfo["vin"].toString()}'),
-              // Text('版本号: ${carinfo["car_version"].toString()}'),
-              // Text('车辆id: ${carinfo["id_s"].toString()}'),
-              // Text('地点: ${carinfo["locationtext"].toString()}'),
-              // SizedBox(height: 50.h),
-              // Text('车锁信息:'),
-              // Text(carinfo["lockinfo"].toString()),
-              // SizedBox(height: 10.h),
-              // Text('里程信息:'),
-              // Text(carinfo["temp"].toString()),
-              // SizedBox(height: 10.h),
-              // Text('温度:'),
-              // Text(carinfo["temp"].toString()),
-              Text(carinfo.toString())
+              Text('状态: ${carinfo["state"].toString()}'),
+              Text('vin: ${carinfo["vin"].toString()}'),
+              Text(
+                  '版本号: ${carinfo["vehicle_state"]["car_version"].toString()}'),
+              Text('车辆id: ${carinfo["id_s"].toString()}'),
+              Text('地点: ' + 'locationtext'),
+
+              // Text(carinfo.toString())
             ],
           ),
         ),

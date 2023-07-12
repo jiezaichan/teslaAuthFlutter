@@ -7,6 +7,8 @@ class url {
 
   static const String getcarinfo = '/api/1/vehicles';
   static String carhandle(String vehicleId, String handle) {
-    return '/api/1/vehicles/$vehicleId/$handle';
+    String url = '/api/1/vehicles/$vehicleId/$handle';
+    print(url);
+    return url;
   }
 }

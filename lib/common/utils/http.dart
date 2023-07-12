@@ -6,8 +6,7 @@ import 'package:tesla_animated_app/screens/global.dart';
 class DIO {
   static final DIO _instance = DIO._internal();
   factory DIO() => _instance;
-  String token = Global.getstr('token')!;
-  static const String BASE_URL_CN = "https://owner-api.vn.cloud.tesla.cn";
+  static const String BASE_URL_CN = "https://owner-api.teslamotors.com";
   late Dio dio;
 
   DIO._internal() {
@@ -51,7 +50,7 @@ class DIO {
     String path, {
     Map<String, dynamic>? queryParameters,
   }) async {
-    print(path);
+    String token = Global.getstr('token') ?? '';
     var response = await dio.get(
       path,
       queryParameters: queryParameters,
@@ -73,6 +72,7 @@ class DIO {
     dynamic data,
     Map<String, dynamic>? query,
   }) async {
+    String token = Global.getstr('token') ?? '';
     var response = await dio.post(
       path,
       data: data,
