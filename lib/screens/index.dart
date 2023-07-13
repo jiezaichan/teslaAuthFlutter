@@ -292,8 +292,6 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
       _loadingtext = '加载中';
     });
     final res = await getbyapi(url.carhandle(id, 'vehicle_data'));
-    print('carinfo');
-    print(res);
     Map carinfo = res["response"];
     String carname = '大土豆';
     // String carname = carinfo["display_name"];
@@ -304,13 +302,11 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
     Map drive_state = carinfo["drive_state"];
     // print(climate_state);
     // print(vehicle_state);
-    print(charge_state);
+    // print(charge_state);
     // print(drive_state);
     String gpx = drive_state["corrected_longitude"].toString() +
         "," +
         drive_state["corrected_latitude"].toString();
-    print('检查gpx');
-    print(gpx);
     var loca = await http.get(Uri.parse(
         'https://restapi.amap.com/v3/geocode/regeo?output=json&location=' +
             gpx +
@@ -373,17 +369,19 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
 
   // 初始方法
   void init() {
-    //1、先判断token的有效时间
     int expunix = Global.getint('unix') ?? 0;
+    //1、第一次进入App-打开webview授权页
     if (expunix == 0) {
       print('需要登录');
       setState(() {
         isShowWeb = true;
       });
+      //2、token失效-去刷新token-唤醒并获取车辆信息
     } else if (getunixnow() > expunix) {
       print('token过期了');
       refreshToken();
     } else {
+      //3、token有效-唤醒并获取车辆信息
       print('token有效');
       wakeAndGetCarInfo();
     }
@@ -392,12 +390,26 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
   //wakeAndGetCarInfo
   void wakeAndGetCarInfo() async {
     String id = Global.getstr('id')!;
-    print('ready to wake up');
-    final wake = await postbyapi(url.carhandle(id, 'wake_up'));
-    print('wake up');
-    print(wake);
-    await Future.delayed(Duration(milliseconds: 120));
-    getcarinfo();
+    bool isWaked = false;
+    // 循环调用 API 直到请求成功
+    while (!isWaked) {
+      try {
+        final wakeres = await postbyapi(url.carhandle(id, 'wake_up'));
+        String wakeState = wakeres['response']['state'];
+        print('检查是否唤醒:' + wakeState);
+        if (wakeState == 'online') {
+          isWaked = true;
+          // 在此处处理成功响应
+          getcarinfo();
+        }
+      } catch (e) {
+        // 在此处处理请求失败的情况
+      }
+      if (!isWaked) {
+        // 等待 1 秒后再次调用 API
+        await Future.delayed(Duration(seconds: 1));
+      }
+    }
   }
 
   //刷新token
@@ -422,6 +434,135 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
     print('unix is : $expunix');
     print('access_token is : $new_token');
     print('refresh_token is : $new_retoken');
+  }
+
+  void mainLock() async {
+    if (_isloadingget == true) {
+      Get.snackbar("提示", textinfo.lock_notice);
+      return;
+    }
+    setState(() {
+      _isloadingget = true;
+    });
+    if (_isleftlock == true) {
+      bool isOk = await handerCar('command/door_unlock'); //解锁主锁
+      if (isOk) {
+        _isleftlock = false;
+      }
+    } else {
+      bool isOk = await handerCar('command/door_lock'); //主锁
+      if (isOk) {
+        _isleftlock = true;
+      }
+    }
+    _isloadingget = false;
+    setState(() {});
+    Global.setbool('iscaropen', _isleftlock);
+  }
+
+  void acLock() async {
+    if (_isacloadingget == true) {
+      Get.snackbar("提示", textinfo.lock_notice);
+      return;
+    }
+    setState(() {
+      _isacloadingget = true;
+    });
+    if (_isacopen == true) {
+      bool isOk = await handerCar('command/auto_conditioning_stop'); //关闭空调
+      if (isOk) {
+        _isacopen = false;
+      }
+    } else {
+      bool isOk = await handerCar('command/auto_conditioning_start'); //开启空调
+      if (isOk) {
+        _isacopen = true;
+      }
+    }
+    _isacloadingget = false;
+    setState(() {});
+    Global.setbool('isacopen', _isacopen);
+  }
+
+  void sbLock() async {
+    if (_issbloadingget == true) {
+      Get.snackbar("提示", textinfo.lock_notice);
+      return;
+    }
+    setState(() {
+      _issbloadingget = true;
+    });
+    if (_issbopen == true) {
+      bool isOk = await handerCar('/command/set_sentry_mode',
+          handData: {"on": "false"}); //关闭哨兵
+      if (isOk) {
+        _issbopen = false;
+      }
+    } else {
+      bool isOk = await handerCar('command/set_sentry_mode',
+          handData: {"on": "true"}); //开启哨兵
+      if (isOk) {
+        _issbopen = true;
+      }
+    }
+    _issbloadingget = false;
+    setState(() {});
+    Global.setbool('issbopen', _issbopen);
+  }
+
+  void headLock() async {}
+  void truckLock() async {
+    if (_isbackloadingget == true) {
+      Get.snackbar("提示", textinfo.lock_notice);
+      return;
+    }
+    setState(() {
+      _isbackloadingget = true;
+    });
+    bool isOk = await handerCar('/command/actuate_trunk',
+        handData: {"which_trunk": "rear"}); //关闭/打开后备箱
+    if (isOk) {
+      setState(() {
+        _istrucklock = this._istrucklock == 0 ? 32 : 0;
+        _isbackloadingget = false;
+      });
+    }
+  }
+
+  //执行命令
+  Future<bool> handerCar(String handerName,
+      {Map<String, dynamic>? handData}) async {
+    String id = Global.getstr('id')!;
+    bool isWaked = false;
+    // 循环调用 API 直到请求成功
+    while (!isWaked) {
+      try {
+        final wakeres = await postbyapi(url.carhandle(id, 'wake_up'));
+        String wakeState = wakeres['response']['state'];
+        print('检查是否唤醒:' + wakeState);
+        if (wakeState == 'online') {
+          isWaked = true;
+          // 在此处处理成功响应
+          final res = handData != null
+              ? await postdatabyapi(url.carhandle(id, handerName), handData)
+              : await postbyapi(url.carhandle(id, handerName));
+          // print(res['response']);
+          bool isOk = res["response"].isNotEmpty && res["response"]["result"]
+              ? true
+              : false;
+          return isOk;
+        }
+      } catch (e) {
+        // 在此处处理请求失败的情况
+        return false; // 添加一个返回语句
+      }
+      if (!isWaked) {
+        // 等待 1 秒后再次调用 API
+        await Future.delayed(Duration(seconds: 1));
+      }
+    }
+    // 添加一个终止函数的返回语句
+    return false;
   }
 
   @override
@@ -532,36 +673,36 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
               return Stack(
                 alignment: Alignment.center,
                 children: [
-                  Column(
-                    children: [
-                      // ElevatedButton(
-                      //     onPressed: () async {
-                      //       Global.del('token');
-                      //       Global.del('retoken');
-                      //       Global.del('unix');
-                      //       setState(() {
-                      //         isShowWeb = !isShowWeb;
-                      //       });
-                      //     },
-                      //     child: Text('打开webview')),
-                      // ElevatedButton(
-                      //     onPressed: () async {
-                      //       String retoken = Global.getstr('retoken') ?? '';
-                      //       var tokenData =
-                      //           await _teslaService.refreshAccessToken(retoken);
-                      //       print('add global unix. astoken:');
-                      //       String new_retoken = tokenData['refresh_token'];
-                      //       String new_token = tokenData['access_token'];
-                      //       print(tokenData);
-                      //       Global.setstr('token', new_token);
-                      //       Global.setstr('retoken', new_retoken);
-                      //     },
-                      //     child: Text('刷新token')),
-                      Spacer(),
-                      ElevatedButton(
-                          onPressed: wakeAndGetCarInfo, child: Text('获取数据')),
-                    ],
-                  ),
+                  // Column(
+                  //   children: [
+                  //     // ElevatedButton(
+                  //     //     onPressed: () async {
+                  //     //       Global.del('token');
+                  //     //       Global.del('retoken');
+                  //     //       Global.del('unix');
+                  //     //       setState(() {
+                  //     //         isShowWeb = !isShowWeb;
+                  //     //       });
+                  //     //     },
+                  //     //     child: Text('打开webview')),
+                  //     // ElevatedButton(
+                  //     //     onPressed: () async {
+                  //     //       String retoken = Global.getstr('retoken') ?? '';
+                  //     //       var tokenData =
+                  //     //           await _teslaService.refreshAccessToken(retoken);
+                  //     //       print('add global unix. astoken:');
+                  //     //       String new_retoken = tokenData['refresh_token'];
+                  //     //       String new_token = tokenData['access_token'];
+                  //     //       print(tokenData);
+                  //     //       Global.setstr('token', new_token);
+                  //     //       Global.setstr('retoken', new_retoken);
+                  //     //     },
+                  //     //     child: Text('刷新token')),
+                  //     Spacer(),
+                  //     ElevatedButton(
+                  //         onPressed: wakeAndGetCarInfo, child: Text('test')),
+                  //   ],
+                  // ),
                   SizedBox(
                     height: constrains.maxHeight,
                     width: constrains.maxWidth,
@@ -658,6 +799,8 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
                         scale: _tyreAnimations[index],
                         child: buildtyrecard(
                           carinfo: carinfo,
+                          carname: _carname,
+                          locationtext: _locationtext,
                         ),
                       ),
                     ),
@@ -741,39 +884,9 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
           duration: defaultDuration,
           opacity: this._page == 0 ? 1 : 0,
           child: mainlockbtn(
-              onTap: () async {
-                if (_isloadingget == true) {
-                  Get.snackbar("提示", textinfo.lock_notice);
-                  return;
-                }
-                setState(() {
-                  _isloadingget = true;
-                });
-                if (this._isleftlock == true) {
-                  final res = await postbyapi(url.carhandle(
-                      Global.getstr('id')!, 'command/door_unlock')); //解锁主锁
-                  if (res["response"]["result"]) {
-                    setState(() {
-                      this._isleftlock = false;
-                      _isloadingget = false;
-                    });
-                    Global.setbool('iscaropen', this._isleftlock);
-                  }
-                } else {
-                  final res = await postbyapi(url.carhandle(
-                      Global.getstr('id')!, 'command/door_lock')); //解锁主锁
-                  if (res["response"]["result"]) {
-                    Get.snackbar("提示", textinfo.lock_lock);
-                    setState(() {
-                      this._isleftlock = true;
-                      _isloadingget = false;
-                    });
-                    Global.setbool('iscaropen', this._isleftlock);
-                  }
-                }
-              },
-              islock: this._isleftlock,
-              isloading: this._isloadingget),
+              onTap: () => mainLock(),
+              islock: _isleftlock,
+              isloading: _isloadingget),
         ),
       ),
       AnimatedPositioned(
@@ -789,40 +902,7 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
             duration: defaultDuration,
             opacity: this._page == 0 ? 1 : 0,
             child: lockacbtn(
-                onTap: () async {
-                  if (_isacloadingget == true) {
-                    Get.snackbar("提示", textinfo.lock_notice);
-                    return;
-                  }
-                  setState(() {
-                    _isacloadingget = true;
-                  });
-                  if (this._isacopen == true) {
-                    final res = await postbyapi(url.carhandle(
-                        Global.getstr('id')!,
-                        'command/auto_conditioning_stop')); //关闭空调
-                    if (res["response"]["result"]) {
-                      setState(() {
-                        this._isacopen = false;
-                        _isacloadingget = false;
-                      });
-                      Global.setbool('isacopen', this._isacopen);
-                    }
-                  } else {
-                    final res = await postbyapi(url.carhandle(
-                        Global.getstr('id')!,
-                        'command/auto_conditioning_start')); //开启空调
-                    if (res["response"]["result"]) {
-                      setState(() {
-                        this._isacopen = true;
-                        _isacloadingget = false;
-                      });
-                      Global.setbool('isacopen', this._isacopen);
-                    }
-                  }
-                },
-                isopen: this._isacopen,
-                isloading: _isacloadingget),
+                onTap: acLock, isopen: _isacopen, isloading: _isacloadingget),
           ),
         ),
       ),
@@ -842,42 +922,7 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
             duration: defaultDuration,
             opacity: this._page == 0 ? 1 : 0,
             child: locksbbtn(
-                onTap: () async {
-                  if (_issbloadingget == true) {
-                    Get.snackbar("提示", textinfo.lock_notice);
-                    return;
-                  }
-                  setState(() {
-                    _issbloadingget = true;
-                  });
-                  if (this._issbopen == true) {
-                    final res = await postdatabyapi(
-                        url.carhandle(
-                            Global.getstr('id')!, '/command/set_sentry_mode'),
-                        {"on": "false"}); //关闭哨兵
-                    if (res["response"]["result"]) {
-                      setState(() {
-                        this._issbopen = false;
-                        _issbloadingget = false;
-                      });
-                      Global.setbool('issbopen', this._issbopen);
-                    }
-                  } else {
-                    final res = await postdatabyapi(
-                        url.carhandle(
-                            Global.getstr('id')!, '/command/set_sentry_mode'),
-                        {"on": "true"}); //开启哨兵
-                    if (res["response"]["result"]) {
-                      setState(() {
-                        this._issbopen = true;
-                        _issbloadingget = false;
-                      });
-                      Global.setbool('issbopen', this._issbopen);
-                    }
-                  }
-                },
-                isopen: this._issbopen,
-                isloading: this._issbloadingget),
+                onTap: sbLock, isopen: _issbopen, isloading: _issbloadingget),
           ),
         ),
       ),
@@ -913,29 +958,9 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
           duration: defaultDuration,
           opacity: this._page == 0 ? 1 : 0,
           child: lockbtn(
-              onTap: () async {
-                if (_isbackloadingget == true) {
-                  Get.snackbar("提示", textinfo.lock_notice);
-                  return;
-                }
-                //doback
-                setState(() {
-                  _isbackloadingget = true;
-                });
-                final res = await postdatabyapi(
-                    url.carhandle(
-                        Global.getstr('id')!, '/command/actuate_trunk'),
-                    {"which_trunk": "rear"}); //关闭后北向
-                print('open/close');
-                if (res["response"]["result"]) {
-                  setState(() {
-                    this._istrucklock = this._istrucklock == 0 ? 32 : 0;
-                    _isbackloadingget = false;
-                  });
-                }
-              },
-              islock: this._istrucklock,
-              isloading: this._isbackloadingget),
+              onTap: truckLock,
+              islock: _istrucklock,
+              isloading: _isbackloadingget),
         ),
       ),
     ];
@@ -983,6 +1008,9 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
 
 //温度info
   Widget buildtempview(BuildContext context, BoxConstraints constrains) {
+    Map climate_state = carinfo["climate_state"];
+    String inTemp = climate_state["inside_temp"].toString() + "\u2103";
+    String outTemp = climate_state["outside_temp"].toString() + "\u2103";
     return this._page == 2
         ? Padding(
             padding: const EdgeInsets.all(defaultPadding),
@@ -1040,9 +1068,7 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text("室内温度", style: TextStyle(color: Colors.white54)),
-                        Text(
-                            this.carinfo["temp"]["in_temp"].toString() +
-                                "\u2103",
+                        Text(inTemp,
                             style: Theme.of(context)
                                 .textTheme
                                 .headlineSmall!
@@ -1054,9 +1080,7 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text("室外温度"),
-                        Text(
-                            this.carinfo["temp"]["out_temp"].toString() +
-                                "\u2103",
+                        Text(outTemp,
                             style: Theme.of(context).textTheme.headlineSmall),
                       ],
                     ),
@@ -1098,11 +1122,16 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
 
 //轮子info
 class buildtyrecard extends StatelessWidget {
-  const buildtyrecard({
-    Key? key,
-    required this.carinfo,
-  }) : super(key: key);
+  const buildtyrecard(
+      {Key? key,
+      required this.carinfo,
+      required this.carname,
+      required this.locationtext})
+      : super(key: key);
   final Map carinfo;
+  final String carname;
+  final String locationtext;
+
   @override
   Widget build(BuildContext context) {
     var detext = new TextStyle(fontWeight: FontWeight.normal, fontSize: 16.sp);
@@ -1124,12 +1153,13 @@ class buildtyrecard extends StatelessWidget {
             children: [
               Text('车辆Api内容:', style: TextStyle(fontSize: 24.sp)),
               SizedBox(height: 50.h),
+              Text('车辆: ${carname}'),
               Text('状态: ${carinfo["state"].toString()}'),
               Text('vin: ${carinfo["vin"].toString()}'),
               Text(
                   '版本号: ${carinfo["vehicle_state"]["car_version"].toString()}'),
-              Text('车辆id: ${carinfo["id_s"].toString()}'),
-              Text('地点: ' + 'locationtext'),
+              // Text('车辆id: ${carinfo["id_s"].toString()}'),
+              Text('地点: ' + locationtext),
 
               // Text(carinfo.toString())
             ],
