@@ -109,6 +109,8 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
       await Future.delayed(Duration(milliseconds: 120));
       String token = Global.getstr('token') ?? '';
       var res = await _teslaService.getVehicles(token);
+      print('res');
+      print(res);
       String id = res['response'][0]['id'].toString();
       String vid = res['response'][0]['vehicle_id'].toString();
       Global.setstr('id', id);
@@ -368,7 +370,7 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
   }
 
   // 初始方法
-  void init() {
+  void init() async {
     int expunix = Global.getint('unix') ?? 0;
     //1、第一次进入App-打开webview授权页
     if (expunix == 0) {
@@ -1008,7 +1010,7 @@ class _IndexPageState extends State<IndexPage> with TickerProviderStateMixin {
 
 //温度info
   Widget buildtempview(BuildContext context, BoxConstraints constrains) {
-    Map climate_state = carinfo["climate_state"];
+    Map climate_state = carinfo["climate_state"] ?? {};
     String inTemp = climate_state["inside_temp"].toString() + "\u2103";
     String outTemp = climate_state["outside_temp"].toString() + "\u2103";
     return this._page == 2

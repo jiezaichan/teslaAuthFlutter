@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import "package:http/http.dart" as http;
 
+import '../../screens/global.dart';
+
 class TeslaService {
   String _ownerapiClientId =
       "c7257eb71a564034f9419ee651c7d0e5f7aa6bfbd18bafb5c5c033b093bb2fa3";
@@ -45,7 +47,10 @@ class TeslaService {
           "Authorization": "Bearer $token"
         },
       );
-      return jsonDecode(response.body);
+      var res = jsonDecode(response.body);
+      String id = res['response'][0]['id'].toString();
+      Global.setstr('id', id);
+      return res;
     } catch (err) {
       print("Unable to exchange Auth Code for Oauth2 Token.");
     }
